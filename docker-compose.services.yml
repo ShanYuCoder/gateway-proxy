@@ -1,0 +1,112 @@
+# Dev tools: MySQL 8.0 + Redis + Mailpit + mock. LocalStack + StackPort chạy riêng khi cần.
+# Gộp với docker-compose.yml (mạng base_shared_net / base-shared — external):
+#   make up-all          # không bật LocalStack
+#   make up-localstack   # LocalStack + StackPort
+#
+# Data bind: ${DATA_PATH_HOST:-./data}/mysql80, .../redis (compose tự mkdir host)
+# Gateway infra conf: gateway/sites/*.conf (mail, mock, stackport, redisadmin)
+
+services:
+  # MySQL 8.0 (mysql_native_password). Host:127.0.0.1:${MYSQL_80_PORT:-13307}. phpMyAdmin: server "MySQL 8.0".
+  #   make up-mysql | restart-mysql
+  mysql-80:
+    image: mysql:8.0
+    container_name: ${PROJECT_NAME:-local_dev}_mysql_80
+    command: --default-authentication-plugin=mysql_native_password --max_allowed_packet=1G
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_APP_USER: ${MYSQL_APP_USER:-smart}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:-smart}
+    ports:
+      - "${MYSQL_80_PORT:-13307}:3306"
+    volumes:
+      # Bind mount: ${DATA_PATH_HOST:-./data}/mysql80 (compose tự tạo folder host nếu chưa có)
+      - ${DATA_PATH_HOST:-./data}/mysql80:/var/lib/mysql
+      - ./mysql/initdb-80:/docker-entrypoint-initdb.d:ro
+      - ./mysql/conf.d:/etc/mysql/conf.d:ro
+    networks:
+      - base-shared
+
+  # Redis — Laravel Horizon / scheduler due lane (host: ${REDIS_PORT:-6379}, service name: redis).
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME:-local_dev}_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      # Bind mount: ${DATA_PATH_HOST:-./data}/redis (compose tự tạo folder host nếu chưa có)
+      - ${DATA_PATH_HOST:-./data}/redis:/data
+    networks:
+      - base-shared
+
+  # Redis UI — https://redisadmin.local.com (gateway/sites/redisadmin.local.com.conf).
+  # REDIS_HOSTS: label:host:port — kết nối sẵn tới service redis trên base_shared_net.
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: ${PROJECT_NAME:-local_dev}_redis_commander
+    depends_on:
+      - redis
+    environment:
+      REDIS_HOSTS: ${REDIS_COMMANDER_HOSTS:-local:redis:6379}
+    networks:
+      - base-shared
+
+  localstack:
+    image: localstack/localstack:3.7
+    container_name: ${PROJECT_NAME:-local_dev}_localstack
+    environment:
+      SERVICES: s3,sqs,sns,logs
+      DEBUG: "0"
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+    volumes:
+      - ./localstack/init:/etc/localstack/init/ready.d:ro
+      - localstack_data:/var/lib/localstack
+    networks:
+      - base-shared
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ${PROJECT_NAME:-local_dev}_mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    networks:
+      - base-shared
+
+  mock-api:
+    build:
+      context: ./mock-api
+      dockerfile: Dockerfile
+    container_name: ${PROJECT_NAME:-local_dev}_mock_api
+    environment:
+      PORT: "4000"
+    volumes:
+      - mock_api_data:/data
+    networks:
+      - base-shared
+
+  # StackPort: S3, SQS, SNS, … trên LocalStack (thay akilamaxi/sqs-admin-ui — SQS đã có trong StackPort).
+  stackport:
+    image: davireis/stackport:0.3.2
+    container_name: ${PROJECT_NAME:-local_dev}_stackport
+    environment:
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      STACKPORT_PORT: "8080"
+      STACKPORT_ALLOW_WRITES: "true"
+    depends_on:
+      - localstack
+    networks:
+      - base-shared
+
+volumes:
+  localstack_data:
+    name: ${PROJECT_NAME:-local_dev}_localstack_data
+  mock_api_data:
+    name: ${PROJECT_NAME:-local_dev}_mock_api_data

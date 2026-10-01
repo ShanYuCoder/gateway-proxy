@@ -1,0 +1,10 @@
+.env
+hosts.sample
+routes.json
+gateway/sites/
+
+# DB bind mount (${DATA_PATH_HOST:-./data}/{mysql,mysql80,postgres,redis}) — không commit data
+data/mysql/
+data/mysql80/
+data/postgres/
+data/redis/

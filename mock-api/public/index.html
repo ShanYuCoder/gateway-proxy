@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mock hub — mock.local.com</title>
+  <style>
+    :root { --bg: #0f1419; --panel: #1a2332; --border: #2d3a4d; --text: #e6edf3; --muted: #8b9cb3; --accent: #58a6ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); background: var(--panel); font-size: 0.95rem; }
+    .wrap { display: flex; flex: 1; min-height: 0; }
+    nav { width: 220px; flex-shrink: 0; border-right: 1px solid var(--border); background: var(--panel); padding: 0.5rem 0; overflow: auto; }
+    nav button { display: block; width: 100%; text-align: left; padding: 0.55rem 1rem; border: none; background: transparent; color: var(--text); cursor: pointer; font-size: 0.875rem; border-left: 3px solid transparent; }
+    nav button:hover { background: rgba(88,166,255,0.08); }
+    nav button.active { border-left-color: var(--accent); background: rgba(88,166,255,0.12); }
+    main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    #panel { flex: 1; overflow: auto; padding: 1rem; font-size: 0.875rem; }
+    #panel pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #111822; padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+    .hint { color: var(--muted); font-size: 0.8rem; margin-top: 0.75rem; }
+    .toolbar { margin-bottom: 0.5rem; }
+    .toolbar button { margin-right: 0.5rem; padding: 0.35rem 0.65rem; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>Mock hub — SMS &amp; Slack log</header>
+  <div class="wrap">
+    <nav id="nav"></nav>
+    <main>
+      <div id="panel"></div>
+    </main>
+  </div>
+  <script>
+    const links = [
+      { id: 'sms', label: 'SMS log (JSON)', url: '/sms/inbox' },
+      { id: 'slack', label: 'Slack webhook log (JSON)', url: '/slack/inbox' },
+    ];
+
+    const nav = document.getElementById('nav');
+    const panel = document.getElementById('panel');
+
+    function setActive(id) {
+      nav.querySelectorAll('button').forEach((b) => {
+        b.classList.toggle('active', b.dataset.id === id);
+      });
+    }
+
+    async function loadFetch(url) {
+      panel.innerHTML = '<p class="hint">Đang tải…</p>';
+      try {
+        const r = await fetch(url, { credentials: 'same-origin' });
+        const text = await r.text();
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+        panel.innerHTML =
+          '<div class="toolbar"><button type="button" id="reload">Tải lại</button><a href="' + url + '" target="_blank" rel="noopener">Mở tab mới</a></div>' +
+          '<pre></pre>';
+        panel.querySelector('pre').textContent = pretty;
+        panel.querySelector('#reload').onclick = () => loadFetch(url);
+      } catch (e) {
+        panel.innerHTML = '<pre>' + String(e) + '</pre>';
+      }
+    }
+
+    links.forEach((item, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = item.label;
+      b.dataset.id = item.id;
+      b.addEventListener('click', () => {
+        setActive(item.id);
+        loadFetch(item.url);
+      });
+      nav.appendChild(b);
+      if (i === 0) b.click();
+    });
+  </script>
+</body>
+</html>

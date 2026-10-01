@@ -1,0 +1,12 @@
+{
+  "name": "smart-sqs-ui",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.883.0",
+    "express": "^4.21.1"
+  }
+}

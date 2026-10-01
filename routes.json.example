@@ -1,0 +1,36 @@
+{
+  "_comment": "cp routes.json.example routes.json rồi chỉnh project/host. Gateway + hosts đọc routes.json (không commit).",
+  "shared": [
+    {
+      "title": "Shared (DB admin UI)",
+      "hosts": [
+        "phpmyadmin.local.com",
+        "pgadmin.local.com",
+        "redisadmin.local.com"
+      ]
+    },
+    {
+      "title": "Shared (dev tools — docker-compose.services.yml)",
+      "hosts": [
+        "mail.local.com",
+        "mock.local.com",
+        "stackport.local.com"
+      ]
+    }
+  ],
+  "projects": {
+    "base": {
+      "api": {
+        "host": "api-base.local.com",
+        "stack": "base",
+        "internal": "laravel.api.com"
+      },
+      "portals": [
+        {
+          "host": "portal-base.local.com",
+          "stack": "base"
+        }
+      ]
+    }
+  }
+}
