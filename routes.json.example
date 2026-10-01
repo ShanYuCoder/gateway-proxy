@@ -1,8 +1,8 @@
 {
-  "_comment": "cp routes.json.example routes.json rồi chỉnh project/host. Gateway + hosts đọc routes.json (không commit).",
+  "_comment": "cp routes.json.example routes.json — thêm/sửa project thật; host *.<SSL_DOMAIN_BASE>. routes.json không commit.",
   "shared": [
     {
-      "title": "Shared (DB admin UI)",
+      "title": "Shared (DB admin UI — docker-compose.yml)",
       "hosts": [
         "phpmyadmin.local.com",
         "pgadmin.local.com",
@@ -10,7 +10,7 @@
       ]
     },
     {
-      "title": "Shared (dev tools — docker-compose.services.yml)",
+      "title": "Shared (dev tools — make up-localstack / docker-compose.services.yml)",
       "hosts": [
         "mail.local.com",
         "mock.local.com",
@@ -19,16 +19,33 @@
     }
   ],
   "projects": {
-    "base": {
+    "internal": {
       "api": {
-        "host": "api-base.local.com",
-        "stack": "base",
+        "host": "api-internal.local.com",
+        "stack": "internal",
         "internal": "laravel.api.com"
       },
       "portals": [
         {
-          "host": "portal-base.local.com",
-          "stack": "base"
+          "host": "portal-internal.local.com",
+          "stack": "internal"
+        }
+      ]
+    },
+    "globalExternal": {
+      "external": true,
+      "sites": [
+        {
+          "host": "api-external.local.com",
+          "role": "web",
+          "container": "dev_external_php",
+          "docroot": "/var/www/html/public"
+        },
+        {
+          "host": "external.local.com",
+          "role": "node",
+          "container": "dev_external_frontend_node",
+          "port": 3000
         }
       ]
     }

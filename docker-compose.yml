@@ -22,7 +22,7 @@ services:
     volumes:
       - ./gateway/sites:/etc/nginx/conf.d:ro
       - ./certs:/etc/nginx/certs:ro
-      # Mairy PHP (EXTERNAL_GATEWAY_PROXY=fastcgi) — MAIRY_PROJECT_WORKSPACE khớp docker-external PROJECT_WORKSPACE
+      # Mairy docroot fastcgi — MAIRY_PROJECT_WORKSPACE khớp ~/docker-external; upstream: routes.json sites[].container/docroot
       - ${MAIRY_PROJECT_WORKSPACE:?set MAIRY_PROJECT_WORKSPACE in .env}/mairy-fullsco:/var/www/mairy-fullsco:ro
       - ${MAIRY_PROJECT_WORKSPACE:?}/mairy-scenario:/var/www/mairy-scenario:ro
       - ${MAIRY_PROJECT_WORKSPACE:?}/mairy-backend:/var/www/mairy-backend:ro
@@ -60,6 +60,7 @@ services:
           - saas-chain.local.com
           - saas-store.local.com
           - stackport.local.com
+          - webbeds-api.local.com
           - webbeds.local.com
           # END gateway-aliases
 

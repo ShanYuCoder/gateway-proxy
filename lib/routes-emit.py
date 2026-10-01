@@ -2,7 +2,7 @@
 """Đọc routes.json — stdout TSV cho bash (không cần jq).
 
 Commands:
-  records    — gateway: project\\trole\\thost\\tport\\tstack\\tinternal\\tphpContainer\\tnodeContainer\\tdocroot
+  records    — gateway: project\\trole\\thost\\tport\\tstack_or_container\\tinternal_or_docroot\\tproxy
   hostlines  — /etc/hosts: scope\\ttitle\\thost  (scope=shared|project slug)
   domains    — một hostname mỗi dòng (SSL SAN)
 
@@ -42,14 +42,12 @@ def api_internal(api: dict, proj: dict) -> str:
 def emit_records(data: dict) -> None:
     for slug, proj in data.get("projects", {}).items():
         if proj.get("external"):
-            php_c = _field(proj.get("phpContainer"))
-            node_c = _field(proj.get("nodeContainer"))
-            docroot = _field(proj.get("docroot"))
             for site in proj.get("sites", []):
                 role = site.get("role", "web")
                 print(
-                    f"{slug}\t{role}\t{site['host']}\t{site['port']}\t"
-                    f"{EMPTY_FIELD}\t{EMPTY_FIELD}\t{php_c}\t{node_c}\t{docroot}"
+                    f"{slug}\t{role}\t{site['host']}\t{_field(site.get('port'))}\t"
+                    f"{_field(site.get('container'))}\t{_field(site.get('docroot'))}\t"
+                    f"{_field(site.get('proxy'))}"
                 )
         else:
             api = proj.get("api")
@@ -58,16 +56,12 @@ def emit_records(data: dict) -> None:
                 internal = api_internal(api, proj)
                 port = api.get("port", DEFAULT_API_PORT)
                 print(
-                    f"{slug}\tapi\t{api['host']}\t{port}\t{stack}\t{_field(internal)}\t"
-                    f"{EMPTY_FIELD}\t{EMPTY_FIELD}\t{EMPTY_FIELD}"
+                    f"{slug}\tapi\t{api['host']}\t{port}\t{stack}\t{_field(internal)}\t{EMPTY_FIELD}"
                 )
             for p in proj.get("portals", []):
                 stack = p.get("stack") or p["host"].split(".")[0]
                 port = p.get("port", DEFAULT_PORTAL_PORT)
-                print(
-                    f"{slug}\tportal\t{p['host']}\t{port}\t{stack}\t{EMPTY_FIELD}\t"
-                    f"{EMPTY_FIELD}\t{EMPTY_FIELD}\t{EMPTY_FIELD}"
-                )
+                print(f"{slug}\tportal\t{p['host']}\t{port}\t{stack}\t{EMPTY_FIELD}\t{EMPTY_FIELD}")
 
 
 def _append_unique_host(hosts: list[str], seen: set[str], host: str) -> None:

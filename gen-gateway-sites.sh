@@ -33,17 +33,8 @@ set +a
 source "$SCRIPT_DIR/lib/ssl-cert-names.sh"
 ssl_cert_load_paths
 
-INTERNAL_DEFAULT="${INTERNAL_API_HOST:-laravel.api.com}"
 API_CONTAINER_PORT="${API_CONTAINER_PORT:-80}"
 PORTAL_CONTAINER_PORT="${PORTAL_CONTAINER_PORT:-3000}"
-EXTERNAL_NODE_CONTAINER="${EXTERNAL_NODE_CONTAINER:-${PROJECT_NAME:-local_dev}_frontend_node}"
-EXTERNAL_GATEWAY_PROXY="${EXTERNAL_GATEWAY_PROXY:-container}"
-EXTERNAL_NGINX_CONTAINER="${EXTERNAL_NGINX_CONTAINER:-${PROJECT_NAME:-local_dev}_nginx}"
-EXTERNAL_PHP82_CONTAINER="${EXTERNAL_PHP82_CONTAINER:-${PROJECT_NAME:-local_dev}_php_82}"
-EXTERNAL_PHP83_CONTAINER="${EXTERNAL_PHP83_CONTAINER:-${PROJECT_NAME:-local_dev}_php_83}"
-EXTERNAL_PHP82_PORT="${EXTERNAL_PHP82_PORT:-18081}"
-EXTERNAL_PHP83_PORT="${EXTERNAL_PHP83_PORT:-18082}"
-EXTERNAL_PHP82_SCENARIO_PORT="${EXTERNAL_PHP82_SCENARIO_PORT:-18084}"
 GATEWAY_CONTAINER="${GATEWAY_CONTAINER:-${PROJECT_NAME:-local_dev}_gateway_nginx}"
 domain_to_conf() {
   printf '%s' "$1" | sed 's/[^a-zA-Z0-9._-]/_/g'
@@ -190,61 +181,13 @@ EOF
   fi
 }
 
-# Map host-published port (routes.json) → external-nginx listen port inside Docker.
-external_nginx_listen_port() {
-  case "$1" in
-    "$EXTERNAL_PHP82_PORT") echo 8081 ;;
-    "$EXTERNAL_PHP83_PORT") echo 8082 ;;
-    "$EXTERNAL_PHP82_SCENARIO_PORT") echo 8084 ;;
-    *) echo "" ;;
-  esac
-}
-
-resolve_external_web_upstream() {
-  local web_port=$1
-  local listen
-  listen="$(external_nginx_listen_port "$web_port")"
-  if [[ "$EXTERNAL_GATEWAY_PROXY" == "container" && -n "$listen" ]]; then
-    echo "http://${EXTERNAL_NGINX_CONTAINER}:${listen}"
-    return
-  fi
-  echo "http://host.docker.internal:${web_port}"
-}
-
-# routes.json web port → FastCGI upstream + document root (paths khớp mount gateway + php-fpm).
-resolve_mairy_fastcgi() {
-  local web_port=$1
-  case "$web_port" in
-    "$EXTERNAL_PHP82_PORT")
-      echo "${EXTERNAL_PHP82_CONTAINER}|/var/www/mairy-fullsco/public"
-      ;;
-    "$EXTERNAL_PHP83_PORT")
-      echo "${EXTERNAL_PHP83_CONTAINER}|/var/www/mairy-backend/public"
-      ;;
-    "$EXTERNAL_PHP82_SCENARIO_PORT")
-      echo "${EXTERNAL_PHP82_CONTAINER}|/var/www/mairy-scenario/src/public"
-      ;;
-    *)
-      echo ""
-      ;;
-  esac
-}
-
 write_web_fastcgi_conf() {
-  local web_dom=$1 web_port=$2
-  local pair fcgi_host docroot
-  pair="$(resolve_mairy_fastcgi "$web_port")"
-  if [[ -z "$pair" ]]; then
-    echo "[ERROR] fastcgi: unknown web port $web_port for $web_dom (routes.json vs EXTERNAL_PHP*_PORT)" >&2
-    exit 1
-  fi
-  fcgi_host="${pair%%|*}"
-  docroot="${pair#*|}"
+  local web_dom=$1 fcgi_host=$2 docroot=$3
   local f="$SITES_DIR/$(domain_to_conf "$web_dom").conf"
   local existed=0
   [[ -f "$f" ]] && existed=1
   cat >"$f" <<EOF
-# Web ${web_dom} → fastcgi ${fcgi_host}:9000 root=${docroot} (EXTERNAL_GATEWAY_PROXY=fastcgi)
+# External PHP ${web_dom} → fastcgi ${fcgi_host}:9000 root=${docroot}
 server {
     listen 80;
     server_name ${web_dom};
@@ -259,6 +202,11 @@ server {
     root ${docroot};
     index index.php index.html;
     client_max_body_size 40M;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location ^~ /storage/ {
+        try_files \$uri =404;
+    }
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -266,7 +214,8 @@ server {
 
     location ~ \\.php\$ {
         try_files \$uri =404;
-        fastcgi_pass ${fcgi_host}:9000;
+        set \$fcgi_upstream ${fcgi_host}:9000;
+        fastcgi_pass \$fcgi_upstream;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         fastcgi_param HTTPS on;
@@ -280,19 +229,13 @@ EOF
   fi
 }
 
-write_web_conf() {
-  local web_dom=$1 web_port=$2 proxy_host=$3
-  if [[ "$EXTERNAL_GATEWAY_PROXY" == "fastcgi" ]]; then
-    write_web_fastcgi_conf "$web_dom" "$web_port"
-    return
-  fi
-  local web_upstream
-  web_upstream="$(resolve_external_web_upstream "$web_port")"
+write_web_http_proxy_conf() {
+  local web_dom=$1 web_upstream=$2 proxy_host=$3
   local f="$SITES_DIR/$(domain_to_conf "$web_dom").conf"
   local existed=0
   [[ -f "$f" ]] && existed=1
   cat >"$f" <<EOF
-# Web ${web_dom} → ${web_upstream} (proxy Host: ${proxy_host}; EXTERNAL_GATEWAY_PROXY=${EXTERNAL_GATEWAY_PROXY})
+# External HTTP ${web_dom} → ${web_upstream} (proxy Host: ${proxy_host})
 server {
     listen 80;
     server_name ${web_dom};
@@ -304,11 +247,11 @@ server {
     ssl_certificate ${SSL_CERT_FILE};
     ssl_certificate_key ${SSL_CERT_KEY};
     ssl_protocols TLSv1.2 TLSv1.3;
-  resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver 127.0.0.11 valid=10s ipv6=off;
     location / {
-    set \$web_upstream ${web_upstream};
+        set \$web_upstream ${web_upstream};
         proxy_http_version 1.1;
-    proxy_pass \$web_upstream;
+        proxy_pass \$web_upstream;
         proxy_set_header Host ${proxy_host};
         proxy_set_header X-Forwarded-Host \$host;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -319,87 +262,23 @@ server {
 }
 EOF
   if [[ "$existed" -eq 1 ]]; then
-    echo "[INFO] Overwrote $f"
+    echo "[INFO] Overwrote $f (http proxy)"
   else
-    echo "[INFO] Created $f"
+    echo "[INFO] Created $f (http proxy)"
   fi
 }
 
-
-write_webbeds_app_conf() {
-  local app_dom=$1 node_port=$2 php_container=$3 node_container=$4 docroot=$5
-  if [[ -z "$php_container" || "$php_container" == "-" ]]; then
-    echo "[ERROR] webbeds $app_dom: thiếu phpContainer trong routes.json (project webbeds)" >&2
-    exit 1
-  fi
-  if [[ -z "$node_container" || "$node_container" == "-" ]]; then
-    echo "[ERROR] webbeds $app_dom: thiếu nodeContainer trong routes.json" >&2
-    exit 1
-  fi
-  if [[ -z "$docroot" || "$docroot" == "-" ]]; then
-    docroot="/var/www/html/public"
-  fi
-  local f="$SITES_DIR/$(domain_to_conf "$app_dom").conf"
-  local existed=0
-  [[ -f "$f" ]] && existed=1
-  cat >"$f" <<EOF
-# Webbeds ${app_dom} → Vue ${node_container}:${node_port} + API fastcgi ${php_container}:9000
-server {
-    listen 80;
-    server_name ${app_dom};
-    return 301 https://\$host\$request_uri;
-}
-server {
-    listen 443 ssl;
-    server_name ${app_dom};
-    ssl_certificate ${SSL_CERT_FILE};
-    ssl_certificate_key ${SSL_CERT_KEY};
-    ssl_protocols TLSv1.2 TLSv1.3;
-    client_max_body_size 40M;
-
-    location ^~ /storage/ {
-        root ${docroot};
-        try_files \$uri =404;
-    }
-
-    location ^~ /api {
-        root ${docroot};
-        try_files \$uri \$uri/ @webbeds_php;
-    }
-
-    location @webbeds_php {
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME ${docroot}/index.php;
-        fastcgi_param QUERY_STRING \$query_string;
-        fastcgi_param HTTPS on;
-        fastcgi_pass ${php_container}:9000;
-    }
-
-    location / {
-        resolver 127.0.0.11 valid=10s ipv6=off;
-        set \$node_upstream http://${node_container}:${node_port};
-        proxy_pass \$node_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-}
-EOF
-  if [[ "$existed" -eq 1 ]]; then
-    echo "[INFO] Overwrote $f (webbeds app)"
-  else
-    echo "[INFO] Created $f (webbeds app)"
-  fi
-}
 
 write_external_node_conf() {
-  local node_dom=$1 node_port=$2
+  local node_dom=$1 node_port=$2 node_container=$3
+  if [[ -z "$node_container" ]]; then
+    echo "[ERROR] $node_dom (role=node): thiếu container trong routes.json sites[]" >&2
+    exit 1
+  fi
   local f="$SITES_DIR/$(domain_to_conf "$node_dom").conf"
   local existed=0
-  local node_target="http://${EXTERNAL_NODE_CONTAINER}:${node_port}"
-  local node_note="${EXTERNAL_NODE_CONTAINER}:${node_port} (Docker network)"
+  local node_target="http://${node_container}:${node_port}"
+  local node_note="${node_container}:${node_port} (Docker network)"
   [[ -f "$f" ]] && existed=1
   cat >"$f" <<EOF
 # External Nuxt ${node_dom} → ${node_note}
@@ -434,37 +313,44 @@ EOF
 }
 
 used=0
-while IFS=$'\t' read -r proj role host port stack_slug internal_h php_container node_container docroot \
-  || [[ -n "${proj:-}" ]]; do
+while IFS=$'\t' read -r proj role host port col5 col6 col7 || [[ -n "${proj:-}" ]]; do
   [[ -z "${proj:-}" ]] && continue
   [[ "$port" == "-" ]] && port=""
-  [[ "$stack_slug" == "-" ]] && stack_slug=""
-  [[ "$internal_h" == "-" ]] && internal_h=""
-  [[ "$php_container" == "-" ]] && php_container=""
-  [[ "$node_container" == "-" ]] && node_container=""
-  [[ "$docroot" == "-" ]] && docroot=""
+  [[ "$col5" == "-" ]] && col5=""
+  [[ "$col6" == "-" ]] && col6=""
+  [[ "$col7" == "-" ]] && col7=""
   case "$role" in
     api)
+      stack_slug="$col5"
+      internal_h="$col6"
       [[ -z "$stack_slug" ]] && stack_slug="$proj"
-      internal_h="${internal_h:-$INTERNAL_DEFAULT}"
+      internal_h="${internal_h:-$host}"
       write_api_conf "$host" "$stack_slug" "$internal_h" "${port:-$API_CONTAINER_PORT}"
       ((used++)) || true
       ;;
     portal)
+      stack_slug="$col5"
       [[ -z "$stack_slug" ]] && stack_slug="$proj"
       write_portal_conf "$host" "$stack_slug" "${port:-$PORTAL_CONTAINER_PORT}"
       ((used++)) || true
       ;;
     web)
-      write_web_conf "$host" "$port" "$host"
+      if [[ -n "$col5" && -n "$col6" ]]; then
+        write_web_fastcgi_conf "$host" "$col5" "$col6"
+      elif [[ -n "$col7" ]]; then
+        write_web_http_proxy_conf "$host" "$col7" "$host"
+      else
+        echo "[ERROR] $host (role=web): cần container+docroot (fastcgi) hoặc proxy trong routes.json" >&2
+        exit 1
+      fi
       ((used++)) || true
       ;;
     node)
-      write_external_node_conf "$host" "$port"
-      ((used++)) || true
-      ;;
-    app)
-      write_webbeds_app_conf "$host" "$port" "$php_container" "$node_container" "$docroot"
+      if [[ -z "$port" ]]; then
+        echo "[ERROR] $host (role=node): thiếu port trong routes.json" >&2
+        exit 1
+      fi
+      write_external_node_conf "$host" "$port" "$col5"
       ((used++)) || true
       ;;
     *)
